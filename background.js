@@ -1,6 +1,23 @@
 const OFFSCREEN_URL = "saver.html";
 let creatingOffscreen;
 
+function waitForOffscreenReady(timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      chrome.runtime.onMessage.removeListener(listener);
+      reject(new Error("Writer did not become ready in time"));
+    }, timeoutMs);
+    function listener(msg) {
+      if (msg && msg.type === "vidsave-offscreen-ready") {
+        clearTimeout(timer);
+        chrome.runtime.onMessage.removeListener(listener);
+        resolve();
+      }
+    }
+    chrome.runtime.onMessage.addListener(listener);
+  });
+}
+
 async function ensureOffscreenDocument() {
   const has = await chrome.offscreen.hasDocument?.();
   if (has) return;
@@ -10,26 +27,33 @@ async function ensureOffscreenDocument() {
     return;
   }
 
-  creatingOffscreen = chrome.offscreen.createDocument({
-    url: OFFSCREEN_URL,
-    reasons: ["BLOBS"],
-    justification: "Write saved video files to the user's chosen folder via the File System Access API.",
-  });
+  creatingOffscreen = (async () => {
+    const readyPromise = waitForOffscreenReady();
+    await chrome.offscreen.createDocument({
+      url: OFFSCREEN_URL,
+      reasons: ["BLOBS"],
+      justification: "Write saved video files to the user's chosen folder via the File System Access API.",
+    });
+    await readyPromise;
+  })();
   await creatingOffscreen;
   creatingOffscreen = null;
 }
 
 chrome.runtime.onConnect.addListener(async (contentPort) => {
   if (contentPort.name !== "vidsave-save") return;
+  console.log("[VidSave/bg] save requested, ensuring offscreen writer");
 
   try {
     await ensureOffscreenDocument();
   } catch (e) {
+    console.warn("[VidSave/bg] offscreen writer failed to start", e);
     contentPort.postMessage({ type: "error", message: "Could not start writer: " + e.message });
     contentPort.disconnect();
     return;
   }
 
+  console.log("[VidSave/bg] offscreen writer ready, relaying");
   const offscreenPort = chrome.runtime.connect({ name: "vidsave-offscreen" });
 
   offscreenPort.onMessage.addListener((msg) => {

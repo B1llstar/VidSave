@@ -33,6 +33,8 @@ async function openWritable(filename) {
   return { writable, uniqueName };
 }
 
+chrome.runtime.sendMessage({ type: "vidsave-offscreen-ready" });
+
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "vidsave-offscreen") return;
 
