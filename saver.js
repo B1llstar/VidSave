@@ -17,28 +17,36 @@ async function ensureUniqueName(dirHandle, filename) {
 }
 
 async function openWritable(filename) {
+  console.log("[VidSave/writer] getting saved directory handle…");
   const dirHandle = await getSavedDirectoryHandle();
+  console.log("[VidSave/writer] dirHandle:", dirHandle);
   if (!dirHandle) {
     throw new Error("No save folder set. Open VidSave options and choose a folder.");
   }
 
   let perm = await dirHandle.queryPermission({ mode: "readwrite" });
+  console.log("[VidSave/writer] queryPermission ->", perm);
   if (perm !== "granted") {
     perm = await dirHandle.requestPermission({ mode: "readwrite" });
+    console.log("[VidSave/writer] requestPermission ->", perm);
   }
   if (perm !== "granted") {
     throw new Error("Folder permission was revoked. Reopen VidSave options and reselect the folder.");
   }
 
   const uniqueName = await ensureUniqueName(dirHandle, filename);
+  console.log("[VidSave/writer] writing as", uniqueName);
   const fileHandle = await dirHandle.getFileHandle(uniqueName, { create: true });
   const writable = await fileHandle.createWritable();
+  console.log("[VidSave/writer] writable stream open");
   return { writable, uniqueName };
 }
 
 chrome.runtime.sendMessage({ type: "vidsave-writer-ready" });
+console.log("[VidSave/writer] loaded, sent ready signal");
 
 chrome.runtime.onConnect.addListener((port) => {
+  console.log("[VidSave/writer] onConnect fired, port name:", port.name);
   if (port.name !== "vidsave-writer") return;
 
   let writable = null;
@@ -47,6 +55,7 @@ chrome.runtime.onConnect.addListener((port) => {
   let written = 0;
 
   port.onMessage.addListener(async (msg) => {
+    console.log("[VidSave/writer] message:", msg.type);
     try {
       if (msg.type === "begin") {
         totalSize = msg.totalSize || 0;
@@ -66,9 +75,11 @@ chrome.runtime.onConnect.addListener((port) => {
         port.postMessage({ type: "ready-for-chunk" });
       } else if (msg.type === "end") {
         await writable.close();
+        console.log("[VidSave/writer] closed, done:", uniqueName);
         port.postMessage({ type: "done", filename: uniqueName });
       }
     } catch (e) {
+      console.error("[VidSave/writer] error:", e);
       port.postMessage({ type: "error", message: e.message || String(e) });
     }
   });
