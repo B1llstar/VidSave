@@ -1,5 +1,6 @@
-const folderNameEl = document.getElementById("folderName");
-const pickBtn = document.getElementById("pickBtn");
+const DEFAULT_SUBFOLDER = "VidSave";
+const subfolderInput = document.getElementById("subfolder");
+const saveBtn = document.getElementById("saveBtn");
 const statusEl = document.getElementById("status");
 
 function setStatus(msg, isError) {
@@ -7,37 +8,18 @@ function setStatus(msg, isError) {
   statusEl.className = "status" + (isError ? " error" : "");
 }
 
-async function refreshFolderLabel() {
-  try {
-    const handle = await getSavedDirectoryHandle();
-    if (!handle) {
-      folderNameEl.textContent = "No folder selected";
-      return;
-    }
-    const perm = await handle.queryPermission({ mode: "readwrite" });
-    folderNameEl.textContent =
-      handle.name + (perm === "granted" ? "" : "  (permission needed — click Choose Folder)");
-  } catch (e) {
-    folderNameEl.textContent = "No folder selected";
-  }
+function sanitizeSubfolder(name) {
+  return name.replace(/[\\:*?"<>|]+/g, "_").replace(/^\/+|\/+$/g, "").trim();
 }
 
-pickBtn.addEventListener("click", async () => {
-  try {
-    const handle = await window.showDirectoryPicker({ mode: "readwrite" });
-    const perm = await handle.requestPermission({ mode: "readwrite" });
-    if (perm !== "granted") {
-      setStatus("Permission was not granted.", true);
-      return;
-    }
-    await saveDirectoryHandle(handle);
-    await refreshFolderLabel();
-    setStatus("Saved! Videos will now be written to \"" + handle.name + "\".", false);
-  } catch (e) {
-    if (e.name !== "AbortError") {
-      setStatus("Could not select folder: " + e.message, true);
-    }
-  }
+chrome.storage.sync.get({ subfolder: DEFAULT_SUBFOLDER }, (items) => {
+  subfolderInput.value = items.subfolder || DEFAULT_SUBFOLDER;
 });
 
-refreshFolderLabel();
+saveBtn.addEventListener("click", () => {
+  const clean = sanitizeSubfolder(subfolderInput.value) || DEFAULT_SUBFOLDER;
+  subfolderInput.value = clean;
+  chrome.storage.sync.set({ subfolder: clean }, () => {
+    setStatus(`Saved! Videos will go into Downloads/${clean}.`, false);
+  });
+});

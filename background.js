@@ -1,88 +1,74 @@
-const WRITER_URL = "saver.html";
+const DEFAULT_SUBFOLDER = "VidSave";
 
-function waitForWriterReady(tabId, timeoutMs = 8000) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      chrome.runtime.onMessage.removeListener(listener);
-      reject(new Error("Writer tab did not become ready in time"));
-    }, timeoutMs);
-    function listener(msg, sender) {
-      if (msg && msg.type === "vidsave-writer-ready" && sender.tab && sender.tab.id === tabId) {
-        clearTimeout(timer);
-        chrome.runtime.onMessage.removeListener(listener);
-        resolve();
-      }
-    }
-    chrome.runtime.onMessage.addListener(listener);
+function getSubfolder() {
+  return new Promise((resolve) => {
+    chrome.storage.sync.get({ subfolder: DEFAULT_SUBFOLDER }, (items) => {
+      resolve(items.subfolder || DEFAULT_SUBFOLDER);
+    });
   });
 }
 
 chrome.runtime.onConnect.addListener((contentPort) => {
   if (contentPort.name !== "vidsave-save") return;
-  console.log("[VidSave/bg] save requested, opening writer tab");
 
-  // The writer tab takes time to open and become ready. Any messages the
-  // content script sends in the meantime (it sends "begin" immediately
-  // after connecting, with no handshake) must not be dropped, so buffer
-  // them here and flush once the writer port is live.
-  const pending = [];
-  let writerPort = null;
-  contentPort.onMessage.addListener((msg) => {
-    if (writerPort) {
+  const chunks = [];
+  let filename = "";
+  let mime = "video/mp4";
+
+  contentPort.onMessage.addListener(async (msg) => {
+    if (msg.type === "begin") {
+      filename = msg.filename;
+      mime = msg.mime || "video/mp4";
+      chunks.length = 0;
+      contentPort.postMessage({ type: "ready-for-chunk" });
+    } else if (msg.type === "chunk") {
+      chunks.push(new Uint8Array(msg.data));
+      contentPort.postMessage({ type: "ready-for-chunk" });
+    } else if (msg.type === "end") {
+      let objectUrl;
       try {
-        writerPort.postMessage(msg);
+        const blob = new Blob(chunks, { type: mime });
+        objectUrl = URL.createObjectURL(blob);
+        const subfolder = await getSubfolder();
+        const downloadId = await chrome.downloads.download({
+          url: objectUrl,
+          filename: `${subfolder}/${filename}`,
+          saveAs: false,
+          conflictAction: "uniquify",
+        });
+
+        const pollTimer = setInterval(async () => {
+          const [item] = await chrome.downloads.search({ id: downloadId });
+          if (item && item.totalBytes > 0) {
+            contentPort.postMessage({
+              type: "progress",
+              percent: Math.min(100, Math.round((item.bytesReceived / item.totalBytes) * 100)),
+            });
+          }
+        }, 200);
+
+        const onChanged = (delta) => {
+          if (delta.id !== downloadId) return;
+          if (delta.state && delta.state.current === "complete") {
+            clearInterval(pollTimer);
+            chrome.downloads.onChanged.removeListener(onChanged);
+            URL.revokeObjectURL(objectUrl);
+            contentPort.postMessage({ type: "done" });
+          } else if (delta.state && delta.state.current === "interrupted") {
+            clearInterval(pollTimer);
+            chrome.downloads.onChanged.removeListener(onChanged);
+            URL.revokeObjectURL(objectUrl);
+            contentPort.postMessage({ type: "error", message: "Download was interrupted" });
+          }
+        };
+        chrome.downloads.onChanged.addListener(onChanged);
       } catch (e) {
-        // writer port may already be gone
+        console.warn("[VidSave/bg] download failed", e);
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        contentPort.postMessage({ type: "error", message: e.message || String(e) });
       }
-    } else {
-      pending.push(msg);
     }
   });
-
-  (async () => {
-    let writerTab;
-    try {
-      writerTab = await chrome.tabs.create({
-        url: chrome.runtime.getURL(WRITER_URL),
-        active: false,
-      });
-      await waitForWriterReady(writerTab.id);
-    } catch (e) {
-      console.warn("[VidSave/bg] writer tab failed to start", e);
-      contentPort.postMessage({ type: "error", message: "Could not start writer: " + e.message });
-      if (writerTab) chrome.tabs.remove(writerTab.id).catch(() => {});
-      contentPort.disconnect();
-      return;
-    }
-
-    console.log("[VidSave/bg] writer tab ready, relaying", writerTab.id);
-    writerPort = chrome.tabs.connect(writerTab.id, { name: "vidsave-writer" });
-
-    const closeWriterTab = () => {
-      chrome.tabs.remove(writerTab.id).catch(() => {});
-    };
-
-    writerPort.onMessage.addListener((msg) => {
-      try {
-        contentPort.postMessage(msg);
-      } catch (e) {
-        // content port may already be gone
-      }
-      if (msg.type === "done" || msg.type === "error") closeWriterTab();
-    });
-
-    contentPort.onDisconnect.addListener(() => {
-      try { writerPort.disconnect(); } catch (e) {}
-      closeWriterTab();
-    });
-    writerPort.onDisconnect.addListener(() => {
-      try { contentPort.disconnect(); } catch (e) {}
-    });
-
-    for (const msg of pending.splice(0)) {
-      writerPort.postMessage(msg);
-    }
-  })();
 });
 
 chrome.runtime.onInstalled.addListener((details) => {

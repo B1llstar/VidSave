@@ -34,17 +34,24 @@
     gap: 10px;
     margin-bottom: 12px;
   }
-  .folder-name {
+  .prefix {
+    font-size: 13px;
+    color: #9a9ba3;
+    white-space: nowrap;
+  }
+  input[type="text"] {
     flex: 1;
     font-size: 13px;
     background: #14161a;
     border: 1px solid #2a2d35;
     border-radius: 6px;
     padding: 8px 10px;
-    color: #d5d6db;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    color: #f0f0f2;
+    font-family: inherit;
+  }
+  input[type="text"]:focus {
+    outline: none;
+    border-color: #5b8cff;
   }
   button {
     background: #5b8cff;
@@ -57,12 +64,6 @@
     cursor: pointer;
   }
   button:hover { background: #4a78e6; }
-  button.secondary {
-    background: transparent;
-    border: 1px solid #3a3d45;
-    color: #d5d6db;
-  }
-  button.secondary:hover { background: #26292f; }
   .status {
     font-size: 12px;
     color: #7bd68a;
@@ -79,17 +80,20 @@
 </head>
 <body>
   <h1>VidSave</h1>
-  <p class="sub">Choose the folder where videos get saved. You only do this once.</p>
+  <p class="sub">Videos save into this subfolder under your browser's Downloads folder.</p>
 
   <div class="card">
     <div class="folder-row">
-      <div class="folder-name" id="folderName">No folder selected</div>
-      <button id="pickBtn">Choose Folder…</button>
+      <span class="prefix">Downloads /</span>
+      <input type="text" id="subfolder" placeholder="VidSave" />
+      <button id="saveBtn">Save</button>
     </div>
     <div class="status" id="status"></div>
     <div class="hint">
-      VidSave writes directly into this folder with no save dialog. If you move,
-      rename, or delete the folder, click "Choose Folder…" again to reselect it.
+      To change where your browser's Downloads folder itself points (e.g. to an
+      external drive or a different location), open
+      <code>brave://settings/downloads</code> — VidSave will follow whatever
+      that's set to.
     </div>
   </div>
 
@@ -97,11 +101,10 @@
     <div class="hint">
       <strong>Tip:</strong> On any page with a video, hover over it and click the
       ⬇ save button that appears in the corner. Files are named after the page
-      title automatically.
+      title automatically and saved with zero dialogs.
     </div>
   </div>
 
-  <script src="fs-store.js"></script>
   <script src="options.js"></script>
 </body>
 </html>
