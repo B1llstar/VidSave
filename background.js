@@ -1,5 +1,30 @@
 const DEFAULT_SUBFOLDER = "VidSave";
 
+// Service workers in some Brave/Chromium builds don't expose
+// URL.createObjectURL, so build a data: URL instead. Encode in
+// 3-byte-aligned pieces so each piece's base64 output can be concatenated
+// directly, keeping only one small binary string in memory at a time
+// instead of the whole file (String.fromCharCode(...bigArray) would also
+// overflow the call stack for large inputs).
+async function bytesToDataUrl(chunks, mime) {
+  const all = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+  let off = 0;
+  for (const chunk of chunks) {
+    all.set(chunk, off);
+    off += chunk.length;
+  }
+
+  let base64 = "";
+  const SUB_CHUNK = 3 * 20000; // multiple of 3 so each piece is byte-aligned
+  for (let i = 0; i < all.length; i += SUB_CHUNK) {
+    const sub = all.subarray(i, i + SUB_CHUNK);
+    let bin = "";
+    for (let j = 0; j < sub.length; j++) bin += String.fromCharCode(sub[j]);
+    base64 += btoa(bin);
+  }
+  return `data:${mime};base64,${base64}`;
+}
+
 function getSubfolder() {
   return new Promise((resolve) => {
     chrome.storage.sync.get({ subfolder: DEFAULT_SUBFOLDER }, (items) => {
@@ -25,13 +50,11 @@ chrome.runtime.onConnect.addListener((contentPort) => {
       chunks.push(new Uint8Array(msg.data));
       contentPort.postMessage({ type: "ready-for-chunk" });
     } else if (msg.type === "end") {
-      let objectUrl;
       try {
-        const blob = new Blob(chunks, { type: mime });
-        objectUrl = URL.createObjectURL(blob);
+        const dataUrl = await bytesToDataUrl(chunks, mime);
         const subfolder = await getSubfolder();
         const downloadId = await chrome.downloads.download({
-          url: objectUrl,
+          url: dataUrl,
           filename: `${subfolder}/${filename}`,
           saveAs: false,
           conflictAction: "uniquify",
@@ -52,19 +75,16 @@ chrome.runtime.onConnect.addListener((contentPort) => {
           if (delta.state && delta.state.current === "complete") {
             clearInterval(pollTimer);
             chrome.downloads.onChanged.removeListener(onChanged);
-            URL.revokeObjectURL(objectUrl);
             contentPort.postMessage({ type: "done" });
           } else if (delta.state && delta.state.current === "interrupted") {
             clearInterval(pollTimer);
             chrome.downloads.onChanged.removeListener(onChanged);
-            URL.revokeObjectURL(objectUrl);
             contentPort.postMessage({ type: "error", message: "Download was interrupted" });
           }
         };
         chrome.downloads.onChanged.addListener(onChanged);
       } catch (e) {
         console.warn("[VidSave/bg] download failed", e);
-        if (objectUrl) URL.revokeObjectURL(objectUrl);
         contentPort.postMessage({ type: "error", message: e.message || String(e) });
       }
     }
