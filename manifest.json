@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "VidSave — One-Click Video Saver",
+  "version": "1.0.0",
+  "description": "Detects videos on any page and saves them to a folder of your choice with one click, even when the site provides no 'Save video as' option.",
+  "permissions": ["downloads", "storage", "scripting", "activeTab", "tabs", "offscreen"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "all_frames": true,
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "VidSave"
+  },
+  "options_page": "options.html",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["saver.html", "saver.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+.vidsave-btn {
+  position: absolute;
+  z-index: 2147483647;
+  background: rgba(20, 22, 26, 0.88);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font: 600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  transition: background 0.15s ease, transform 0.1s ease;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.vidsave-btn:hover {
+  background: rgba(91, 140, 255, 0.95);
+  transform: translateY(-1px);
+}
+
+.vidsave-btn[data-state="busy"] {
+  background: rgba(91, 140, 255, 0.95);
+  cursor: default;
+  pointer-events: none;
+}
+
+.vidsave-btn[data-state="done"] {
+  background: rgba(58, 166, 90, 0.95);
+}
+
+.vidsave-btn[data-state="error"] {
+  background: rgba(214, 69, 69, 0.95);
+}

@@ -1,0 +1,107 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>VidSave Settings</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #14161a;
+    color: #f0f0f2;
+    margin: 0;
+    padding: 32px;
+    width: 420px;
+  }
+  h1 {
+    font-size: 18px;
+    margin: 0 0 4px;
+  }
+  p.sub {
+    color: #9a9ba3;
+    font-size: 13px;
+    margin: 0 0 20px;
+  }
+  .card {
+    background: #1d2026;
+    border: 1px solid #2a2d35;
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+  .folder-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .folder-name {
+    flex: 1;
+    font-size: 13px;
+    background: #14161a;
+    border: 1px solid #2a2d35;
+    border-radius: 6px;
+    padding: 8px 10px;
+    color: #d5d6db;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  button {
+    background: #5b8cff;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 9px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { background: #4a78e6; }
+  button.secondary {
+    background: transparent;
+    border: 1px solid #3a3d45;
+    color: #d5d6db;
+  }
+  button.secondary:hover { background: #26292f; }
+  .status {
+    font-size: 12px;
+    color: #7bd68a;
+    margin-top: 8px;
+    min-height: 16px;
+  }
+  .status.error { color: #ff8080; }
+  .hint {
+    font-size: 12px;
+    color: #7d7e87;
+    line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+  <h1>VidSave</h1>
+  <p class="sub">Choose the folder where videos get saved. You only do this once.</p>
+
+  <div class="card">
+    <div class="folder-row">
+      <div class="folder-name" id="folderName">No folder selected</div>
+      <button id="pickBtn">Choose Folder…</button>
+    </div>
+    <div class="status" id="status"></div>
+    <div class="hint">
+      VidSave writes directly into this folder with no save dialog. If you move,
+      rename, or delete the folder, click "Choose Folder…" again to reselect it.
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="hint">
+      <strong>Tip:</strong> On any page with a video, hover over it and click the
+      ⬇ save button that appears in the corner. Files are named after the page
+      title automatically.
+    </div>
+  </div>
+
+  <script src="fs-store.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>
