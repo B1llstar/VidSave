@@ -37,6 +37,33 @@
     return await res.blob();
   }
 
+  function fetchViaBackground(url) {
+    return new Promise((resolve, reject) => {
+      const port = chrome.runtime.connect({ name: "vidsave-bg-fetch" });
+      const chunks = [];
+      let contentType = "";
+
+      port.onMessage.addListener((msg) => {
+        if (msg.type === "meta") {
+          contentType = msg.contentType;
+        } else if (msg.type === "chunk") {
+          chunks.push(new Uint8Array(msg.data));
+        } else if (msg.type === "done") {
+          port.disconnect();
+          resolve(new Blob(chunks, { type: contentType || "video/mp4" }));
+        } else if (msg.type === "error") {
+          port.disconnect();
+          reject(new Error(msg.message));
+        }
+      });
+      port.onDisconnect.addListener(() => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      });
+
+      port.postMessage({ type: "fetch", url });
+    });
+  }
+
   function recordViaCapture(video, maxMs = 60000) {
     return new Promise((resolve, reject) => {
       let stream;
@@ -90,8 +117,17 @@
     const src = video.currentSrc || video.src;
 
     if (src && !src.startsWith("blob:")) {
+      // Background fetch runs in a privileged, DOM-less context, so it is
+      // not subject to the page's CORS/tainting rules that block a
+      // content-script fetch() or captureStream() on cross-origin media.
       try {
         setButtonState(btn, "busy", "⏳ Fetching…");
+        const blob = await fetchViaBackground(src);
+        if (blob.size > 0) return { blob, sourceUrl: src };
+      } catch (e) {
+        // fall through
+      }
+      try {
         const blob = await fetchAsBlob(src);
         if (blob.size > 0) return { blob, sourceUrl: src };
       } catch (e) {

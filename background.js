@@ -61,3 +61,30 @@ chrome.runtime.onInstalled.addListener((details) => {
     chrome.runtime.openOptionsPage();
   }
 });
+
+// Background fetch bypasses page-level CORS/tainting restrictions that
+// block content-script fetch() and <video>.captureStream() on
+// cross-origin media without permissive CORS headers. Streamed back over
+// a port in chunks so large videos don't hit message-size limits.
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== "vidsave-bg-fetch") return;
+
+  port.onMessage.addListener(async (msg) => {
+    if (msg.type !== "fetch") return;
+    try {
+      const res = await fetch(msg.url, { credentials: "include" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const buf = await res.arrayBuffer();
+      const contentType = res.headers.get("content-type") || "";
+      const CHUNK = 4 * 1024 * 1024;
+      port.postMessage({ type: "meta", contentType, totalSize: buf.byteLength });
+      for (let offset = 0; offset < buf.byteLength; offset += CHUNK) {
+        const slice = buf.slice(offset, offset + CHUNK);
+        port.postMessage({ type: "chunk", data: Array.from(new Uint8Array(slice)) });
+      }
+      port.postMessage({ type: "done" });
+    } catch (e) {
+      port.postMessage({ type: "error", message: e.message || String(e) });
+    }
+  });
+});
