@@ -22,7 +22,10 @@ async function openWritable(filename) {
     throw new Error("No save folder set. Open VidSave options and choose a folder.");
   }
 
-  const perm = await dirHandle.queryPermission({ mode: "readwrite" });
+  let perm = await dirHandle.queryPermission({ mode: "readwrite" });
+  if (perm !== "granted") {
+    perm = await dirHandle.requestPermission({ mode: "readwrite" });
+  }
   if (perm !== "granted") {
     throw new Error("Folder permission was revoked. Reopen VidSave options and reselect the folder.");
   }
@@ -33,10 +36,10 @@ async function openWritable(filename) {
   return { writable, uniqueName };
 }
 
-chrome.runtime.sendMessage({ type: "vidsave-offscreen-ready" });
+chrome.runtime.sendMessage({ type: "vidsave-writer-ready" });
 
 chrome.runtime.onConnect.addListener((port) => {
-  if (port.name !== "vidsave-offscreen") return;
+  if (port.name !== "vidsave-writer") return;
 
   let writable = null;
   let uniqueName = null;

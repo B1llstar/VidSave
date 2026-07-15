@@ -1,14 +1,13 @@
-const OFFSCREEN_URL = "saver.html";
-let creatingOffscreen;
+const WRITER_URL = "saver.html";
 
-function waitForOffscreenReady(timeoutMs = 5000) {
+function waitForWriterReady(tabId, timeoutMs = 8000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       chrome.runtime.onMessage.removeListener(listener);
-      reject(new Error("Writer did not become ready in time"));
+      reject(new Error("Writer tab did not become ready in time"));
     }, timeoutMs);
-    function listener(msg) {
-      if (msg && msg.type === "vidsave-offscreen-ready") {
+    function listener(msg, sender) {
+      if (msg && msg.type === "vidsave-writer-ready" && sender.tab && sender.tab.id === tabId) {
         clearTimeout(timer);
         chrome.runtime.onMessage.removeListener(listener);
         resolve();
@@ -18,64 +17,54 @@ function waitForOffscreenReady(timeoutMs = 5000) {
   });
 }
 
-async function ensureOffscreenDocument() {
-  const has = await chrome.offscreen.hasDocument?.();
-  if (has) return;
-
-  if (creatingOffscreen) {
-    await creatingOffscreen;
-    return;
-  }
-
-  creatingOffscreen = (async () => {
-    const readyPromise = waitForOffscreenReady();
-    await chrome.offscreen.createDocument({
-      url: OFFSCREEN_URL,
-      reasons: ["BLOBS"],
-      justification: "Write saved video files to the user's chosen folder via the File System Access API.",
-    });
-    await readyPromise;
-  })();
-  await creatingOffscreen;
-  creatingOffscreen = null;
-}
-
 chrome.runtime.onConnect.addListener(async (contentPort) => {
   if (contentPort.name !== "vidsave-save") return;
-  console.log("[VidSave/bg] save requested, ensuring offscreen writer");
+  console.log("[VidSave/bg] save requested, opening writer tab");
 
+  let writerTab;
   try {
-    await ensureOffscreenDocument();
+    writerTab = await chrome.tabs.create({
+      url: chrome.runtime.getURL(WRITER_URL),
+      active: false,
+    });
+    await waitForWriterReady(writerTab.id);
   } catch (e) {
-    console.warn("[VidSave/bg] offscreen writer failed to start", e);
+    console.warn("[VidSave/bg] writer tab failed to start", e);
     contentPort.postMessage({ type: "error", message: "Could not start writer: " + e.message });
+    if (writerTab) chrome.tabs.remove(writerTab.id).catch(() => {});
     contentPort.disconnect();
     return;
   }
 
-  console.log("[VidSave/bg] offscreen writer ready, relaying");
-  const offscreenPort = chrome.runtime.connect({ name: "vidsave-offscreen" });
+  console.log("[VidSave/bg] writer tab ready, relaying", writerTab.id);
+  const writerPort = chrome.tabs.connect(writerTab.id, { name: "vidsave-writer" });
 
-  offscreenPort.onMessage.addListener((msg) => {
+  const closeWriterTab = () => {
+    chrome.tabs.remove(writerTab.id).catch(() => {});
+  };
+
+  writerPort.onMessage.addListener((msg) => {
     try {
       contentPort.postMessage(msg);
     } catch (e) {
       // content port may already be gone
     }
+    if (msg.type === "done" || msg.type === "error") closeWriterTab();
   });
   contentPort.onMessage.addListener((msg) => {
     try {
-      offscreenPort.postMessage(msg);
+      writerPort.postMessage(msg);
     } catch (e) {
-      // offscreen port may already be gone
+      // writer port may already be gone
     }
   });
 
   const cleanup = () => {
-    try { offscreenPort.disconnect(); } catch (e) {}
+    try { writerPort.disconnect(); } catch (e) {}
+    closeWriterTab();
   };
   contentPort.onDisconnect.addListener(cleanup);
-  offscreenPort.onDisconnect.addListener(() => {
+  writerPort.onDisconnect.addListener(() => {
     try { contentPort.disconnect(); } catch (e) {}
   });
 });
