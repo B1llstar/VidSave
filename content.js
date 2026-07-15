@@ -26,9 +26,14 @@
     return `${title}.${ext}`;
   }
 
-  function setButtonState(btn, state, text) {
+  function setButtonState(btn, state, text, percent) {
     btn.dataset.state = state;
     btn.textContent = text;
+    if (typeof percent === "number" && isFinite(percent)) {
+      btn.style.setProperty("--vidsave-progress", Math.max(0, Math.min(100, percent)) + "%");
+    } else {
+      btn.style.setProperty("--vidsave-progress", state === "idle" ? "0%" : "100%");
+    }
   }
 
   async function fetchAsBlob(url) {
@@ -37,7 +42,7 @@
     return await res.blob();
   }
 
-  function fetchViaBackground(url) {
+  function fetchViaBackground(url, onProgress) {
     return new Promise((resolve, reject) => {
       const port = chrome.runtime.connect({ name: "vidsave-bg-fetch" });
       const chunks = [];
@@ -48,6 +53,10 @@
           contentType = msg.contentType;
         } else if (msg.type === "chunk") {
           chunks.push(new Uint8Array(msg.data));
+          if (onProgress) {
+            const percent = msg.totalSize ? (msg.received / msg.totalSize) * 100 : null;
+            onProgress(percent, msg.received, msg.totalSize);
+          }
         } else if (msg.type === "done") {
           port.disconnect();
           resolve(new Blob(chunks, { type: contentType || "video/mp4" }));
@@ -64,7 +73,7 @@
     });
   }
 
-  function recordViaCapture(video, maxMs = 60000) {
+  function recordViaCapture(video, onProgress, maxMs = 60000) {
     return new Promise((resolve, reject) => {
       let stream;
       try {
@@ -90,10 +99,12 @@
         if (e.data && e.data.size) chunks.push(e.data);
       };
       recorder.onerror = (e) => reject(e.error || new Error("MediaRecorder error"));
-      recorder.onstop = () => resolve(new Blob(chunks, { type: mime }));
+      recorder.onstop = () => {
+        clearInterval(progressTimer);
+        resolve(new Blob(chunks, { type: mime }));
+      };
 
       const wasPaused = video.paused;
-      const startedAt = video.currentTime;
       const onEnded = () => finish();
       const onTimeout = setTimeout(finish, maxMs);
 
@@ -103,6 +114,12 @@
         if (recorder.state !== "inactive") recorder.stop();
         if (wasPaused) video.pause();
       }
+
+      const progressTimer = setInterval(() => {
+        if (onProgress && video.duration) {
+          onProgress((video.currentTime / video.duration) * 100);
+        }
+      }, 250);
 
       video.addEventListener("ended", onEnded);
       recorder.start(500);
@@ -115,14 +132,18 @@
 
   async function obtainVideoBlob(video, btn) {
     const src = video.currentSrc || video.src;
+    const onFetchProgress = (percent) => {
+      const label = typeof percent === "number" ? `⏳ Fetching… ${Math.round(percent)}%` : "⏳ Fetching…";
+      setButtonState(btn, "busy", label, percent);
+    };
 
     if (src && !src.startsWith("blob:")) {
       // Background fetch runs in a privileged, DOM-less context, so it is
       // not subject to the page's CORS/tainting rules that block a
       // content-script fetch() or captureStream() on cross-origin media.
       try {
-        setButtonState(btn, "busy", "⏳ Fetching…");
-        const blob = await fetchViaBackground(src);
+        setButtonState(btn, "busy", "⏳ Fetching…", 0);
+        const blob = await fetchViaBackground(src, onFetchProgress);
         if (blob.size > 0) return { blob, sourceUrl: src };
       } catch (e) {
         console.warn("[VidSave] background fetch failed:", e.message || e);
@@ -137,7 +158,7 @@
 
     if (src && src.startsWith("blob:")) {
       try {
-        setButtonState(btn, "busy", "⏳ Fetching…");
+        setButtonState(btn, "busy", "⏳ Fetching…", 0);
         const blob = await fetchAsBlob(src);
         if (blob.size > 0) return { blob, sourceUrl: src };
       } catch (e) {
@@ -145,12 +166,15 @@
       }
     }
 
-    setButtonState(btn, "busy", "⏺ Recording…");
-    const blob = await recordViaCapture(video);
+    const onRecordProgress = (percent) => {
+      setButtonState(btn, "busy", `⏺ Recording… ${Math.round(percent)}%`, percent);
+    };
+    setButtonState(btn, "busy", "⏺ Recording…", 0);
+    const blob = await recordViaCapture(video, onRecordProgress);
     return { blob, sourceUrl: src || location.href };
   }
 
-  async function sendBlobToSaver(blob, filename) {
+  async function sendBlobToSaver(blob, filename, onProgress) {
     const buf = await blob.arrayBuffer();
     return new Promise((resolve, reject) => {
       const port = chrome.runtime.connect({ name: "vidsave-save" });
@@ -165,7 +189,9 @@
       });
 
       port.onMessage.addListener((msg) => {
-        if (msg.type === "ready-for-chunk") {
+        if (msg.type === "progress") {
+          if (onProgress) onProgress(msg.percent);
+        } else if (msg.type === "ready-for-chunk") {
           if (offset >= buf.byteLength) {
             port.postMessage({ type: "end" });
             return;
@@ -193,9 +219,12 @@
     try {
       const { blob, sourceUrl } = await obtainVideoBlob(video, btn);
       const filename = makeFilename(video, blob, sourceUrl);
-      setButtonState(btn, "busy", "💾 Saving…");
-      await sendBlobToSaver(blob, filename);
-      setButtonState(btn, "done", "✅ Saved");
+      setButtonState(btn, "busy", "💾 Saving… 0%", 0);
+      await sendBlobToSaver(blob, filename, (percent) => {
+        const label = typeof percent === "number" ? `💾 Saving… ${Math.round(percent)}%` : "💾 Saving…";
+        setButtonState(btn, "busy", label, percent);
+      });
+      setButtonState(btn, "done", "✅ Saved", 100);
       setTimeout(() => setButtonState(btn, "idle", "⬇ Save video"), 2500);
     } catch (e) {
       console.error("[VidSave]", e);

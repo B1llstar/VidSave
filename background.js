@@ -75,13 +75,22 @@ chrome.runtime.onConnect.addListener((port) => {
     try {
       const res = await fetch(msg.url, { credentials: "omit" });
       if (!res.ok) throw new Error("HTTP " + res.status);
-      const buf = await res.arrayBuffer();
       const contentType = res.headers.get("content-type") || "";
-      const CHUNK = 4 * 1024 * 1024;
-      port.postMessage({ type: "meta", contentType, totalSize: buf.byteLength });
-      for (let offset = 0; offset < buf.byteLength; offset += CHUNK) {
-        const slice = buf.slice(offset, offset + CHUNK);
-        port.postMessage({ type: "chunk", data: Array.from(new Uint8Array(slice)) });
+      const totalSize = Number(res.headers.get("content-length")) || 0;
+      port.postMessage({ type: "meta", contentType, totalSize });
+
+      const reader = res.body.getReader();
+      let received = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        received += value.byteLength;
+        port.postMessage({
+          type: "chunk",
+          data: Array.from(value),
+          received,
+          totalSize,
+        });
       }
       port.postMessage({ type: "done" });
     } catch (e) {

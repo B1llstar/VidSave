@@ -16,7 +16,7 @@ async function ensureUniqueName(dirHandle, filename) {
   }
 }
 
-async function writeFile(filename, chunks) {
+async function openWritable(filename) {
   const dirHandle = await getSavedDirectoryHandle();
   if (!dirHandle) {
     throw new Error("No save folder set. Open VidSave options and choose a folder.");
@@ -30,34 +30,38 @@ async function writeFile(filename, chunks) {
   const uniqueName = await ensureUniqueName(dirHandle, filename);
   const fileHandle = await dirHandle.getFileHandle(uniqueName, { create: true });
   const writable = await fileHandle.createWritable();
-
-  for (const chunk of chunks) {
-    await writable.write(chunk);
-  }
-  await writable.close();
-  return uniqueName;
+  return { writable, uniqueName };
 }
 
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "vidsave-offscreen") return;
 
-  let filename = null;
-  let mime = "video/mp4";
-  const chunks = [];
+  let writable = null;
+  let uniqueName = null;
+  let totalSize = 0;
+  let written = 0;
 
   port.onMessage.addListener(async (msg) => {
     try {
       if (msg.type === "begin") {
-        filename = msg.filename;
-        mime = msg.mime;
-        chunks.length = 0;
+        totalSize = msg.totalSize || 0;
+        written = 0;
+        ({ writable, uniqueName } = await openWritable(msg.filename));
         port.postMessage({ type: "ready-for-chunk" });
       } else if (msg.type === "chunk") {
-        chunks.push(new Uint8Array(msg.data));
+        const bytes = new Uint8Array(msg.data);
+        await writable.write(bytes);
+        written += bytes.byteLength;
+        port.postMessage({
+          type: "progress",
+          written,
+          totalSize,
+          percent: totalSize ? Math.min(100, Math.round((written / totalSize) * 100)) : null,
+        });
         port.postMessage({ type: "ready-for-chunk" });
       } else if (msg.type === "end") {
-        const savedName = await writeFile(filename, chunks);
-        port.postMessage({ type: "done", filename: savedName });
+        await writable.close();
+        port.postMessage({ type: "done", filename: uniqueName });
       }
     } catch (e) {
       port.postMessage({ type: "error", message: e.message || String(e) });
