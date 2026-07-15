@@ -71,8 +71,9 @@ chrome.runtime.onConnect.addListener((port) => {
 
   port.onMessage.addListener(async (msg) => {
     if (msg.type !== "fetch") return;
+    console.log("[VidSave/bg] fetching", msg.url);
     try {
-      const res = await fetch(msg.url, { credentials: "include" });
+      const res = await fetch(msg.url, { credentials: "omit" });
       if (!res.ok) throw new Error("HTTP " + res.status);
       const buf = await res.arrayBuffer();
       const contentType = res.headers.get("content-type") || "";
@@ -84,6 +85,7 @@ chrome.runtime.onConnect.addListener((port) => {
       }
       port.postMessage({ type: "done" });
     } catch (e) {
+      console.warn("[VidSave/bg] fetch failed", e);
       port.postMessage({ type: "error", message: e.message || String(e) });
     }
   });

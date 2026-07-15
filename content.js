@@ -32,7 +32,7 @@
   }
 
   async function fetchAsBlob(url) {
-    const res = await fetch(url, { credentials: "include" });
+    const res = await fetch(url, { credentials: "omit" });
     if (!res.ok) throw new Error("HTTP " + res.status);
     return await res.blob();
   }
@@ -125,13 +125,13 @@
         const blob = await fetchViaBackground(src);
         if (blob.size > 0) return { blob, sourceUrl: src };
       } catch (e) {
-        // fall through
+        console.warn("[VidSave] background fetch failed:", e.message || e);
       }
       try {
         const blob = await fetchAsBlob(src);
         if (blob.size > 0) return { blob, sourceUrl: src };
       } catch (e) {
-        // fall through to blob/record strategies
+        console.warn("[VidSave] in-page fetch failed:", e.message || e);
       }
     }
 
