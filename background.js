@@ -17,56 +17,72 @@ function waitForWriterReady(tabId, timeoutMs = 8000) {
   });
 }
 
-chrome.runtime.onConnect.addListener(async (contentPort) => {
+chrome.runtime.onConnect.addListener((contentPort) => {
   if (contentPort.name !== "vidsave-save") return;
   console.log("[VidSave/bg] save requested, opening writer tab");
 
-  let writerTab;
-  try {
-    writerTab = await chrome.tabs.create({
-      url: chrome.runtime.getURL(WRITER_URL),
-      active: false,
-    });
-    await waitForWriterReady(writerTab.id);
-  } catch (e) {
-    console.warn("[VidSave/bg] writer tab failed to start", e);
-    contentPort.postMessage({ type: "error", message: "Could not start writer: " + e.message });
-    if (writerTab) chrome.tabs.remove(writerTab.id).catch(() => {});
-    contentPort.disconnect();
-    return;
-  }
-
-  console.log("[VidSave/bg] writer tab ready, relaying", writerTab.id);
-  const writerPort = chrome.tabs.connect(writerTab.id, { name: "vidsave-writer" });
-
-  const closeWriterTab = () => {
-    chrome.tabs.remove(writerTab.id).catch(() => {});
-  };
-
-  writerPort.onMessage.addListener((msg) => {
-    try {
-      contentPort.postMessage(msg);
-    } catch (e) {
-      // content port may already be gone
-    }
-    if (msg.type === "done" || msg.type === "error") closeWriterTab();
-  });
+  // The writer tab takes time to open and become ready. Any messages the
+  // content script sends in the meantime (it sends "begin" immediately
+  // after connecting, with no handshake) must not be dropped, so buffer
+  // them here and flush once the writer port is live.
+  const pending = [];
+  let writerPort = null;
   contentPort.onMessage.addListener((msg) => {
-    try {
-      writerPort.postMessage(msg);
-    } catch (e) {
-      // writer port may already be gone
+    if (writerPort) {
+      try {
+        writerPort.postMessage(msg);
+      } catch (e) {
+        // writer port may already be gone
+      }
+    } else {
+      pending.push(msg);
     }
   });
 
-  const cleanup = () => {
-    try { writerPort.disconnect(); } catch (e) {}
-    closeWriterTab();
-  };
-  contentPort.onDisconnect.addListener(cleanup);
-  writerPort.onDisconnect.addListener(() => {
-    try { contentPort.disconnect(); } catch (e) {}
-  });
+  (async () => {
+    let writerTab;
+    try {
+      writerTab = await chrome.tabs.create({
+        url: chrome.runtime.getURL(WRITER_URL),
+        active: false,
+      });
+      await waitForWriterReady(writerTab.id);
+    } catch (e) {
+      console.warn("[VidSave/bg] writer tab failed to start", e);
+      contentPort.postMessage({ type: "error", message: "Could not start writer: " + e.message });
+      if (writerTab) chrome.tabs.remove(writerTab.id).catch(() => {});
+      contentPort.disconnect();
+      return;
+    }
+
+    console.log("[VidSave/bg] writer tab ready, relaying", writerTab.id);
+    writerPort = chrome.tabs.connect(writerTab.id, { name: "vidsave-writer" });
+
+    const closeWriterTab = () => {
+      chrome.tabs.remove(writerTab.id).catch(() => {});
+    };
+
+    writerPort.onMessage.addListener((msg) => {
+      try {
+        contentPort.postMessage(msg);
+      } catch (e) {
+        // content port may already be gone
+      }
+      if (msg.type === "done" || msg.type === "error") closeWriterTab();
+    });
+
+    contentPort.onDisconnect.addListener(() => {
+      try { writerPort.disconnect(); } catch (e) {}
+      closeWriterTab();
+    });
+    writerPort.onDisconnect.addListener(() => {
+      try { contentPort.disconnect(); } catch (e) {}
+    });
+
+    for (const msg of pending.splice(0)) {
+      writerPort.postMessage(msg);
+    }
+  })();
 });
 
 chrome.runtime.onInstalled.addListener((details) => {
