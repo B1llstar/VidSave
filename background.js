@@ -4,8 +4,11 @@ const DEFAULT_SUBFOLDER = "VidSave";
 // URL.createObjectURL, so build a data: URL instead. Encode in
 // 3-byte-aligned pieces so each piece's base64 output can be concatenated
 // directly, keeping only one small binary string in memory at a time
-// instead of the whole file (String.fromCharCode(...bigArray) would also
-// overflow the call stack for large inputs).
+// instead of the whole file. Bulk-decodes each piece via
+// String.fromCharCode.apply (fast, native) rather than a per-byte loop,
+// and yields to the event loop between pieces so concurrent saves and
+// the rest of the browser stay responsive instead of blocking the
+// service worker's single thread for the whole file at once.
 async function bytesToDataUrl(chunks, mime) {
   const all = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
   let off = 0;
@@ -14,15 +17,19 @@ async function bytesToDataUrl(chunks, mime) {
     off += chunk.length;
   }
 
-  let base64 = "";
+  const parts = [];
   const SUB_CHUNK = 3 * 20000; // multiple of 3 so each piece is byte-aligned
+  const APPLY_LIMIT = 0x2000; // stay well under argument-count limits for .apply
   for (let i = 0; i < all.length; i += SUB_CHUNK) {
     const sub = all.subarray(i, i + SUB_CHUNK);
     let bin = "";
-    for (let j = 0; j < sub.length; j++) bin += String.fromCharCode(sub[j]);
-    base64 += btoa(bin);
+    for (let j = 0; j < sub.length; j += APPLY_LIMIT) {
+      bin += String.fromCharCode.apply(null, sub.subarray(j, j + APPLY_LIMIT));
+    }
+    parts.push(btoa(bin));
+    if (i % (SUB_CHUNK * 20) === 0) await new Promise((r) => setTimeout(r, 0));
   }
-  return `data:${mime};base64,${base64}`;
+  return `data:${mime};base64,${parts.join("")}`;
 }
 
 function getSubfolder() {
@@ -47,7 +54,7 @@ chrome.runtime.onConnect.addListener((contentPort) => {
       chunks.length = 0;
       contentPort.postMessage({ type: "ready-for-chunk" });
     } else if (msg.type === "chunk") {
-      chunks.push(new Uint8Array(msg.data));
+      chunks.push(msg.data);
       contentPort.postMessage({ type: "ready-for-chunk" });
     } else if (msg.type === "end") {
       try {
@@ -122,7 +129,7 @@ chrome.runtime.onConnect.addListener((port) => {
         received += value.byteLength;
         port.postMessage({
           type: "chunk",
-          data: Array.from(value),
+          data: value,
           received,
           totalSize,
         });

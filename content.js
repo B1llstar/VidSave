@@ -52,7 +52,7 @@
         if (msg.type === "meta") {
           contentType = msg.contentType;
         } else if (msg.type === "chunk") {
-          chunks.push(new Uint8Array(msg.data));
+          chunks.push(msg.data);
           if (onProgress) {
             const percent = msg.totalSize ? (msg.received / msg.totalSize) * 100 : null;
             onProgress(percent, msg.received, msg.totalSize);
@@ -198,7 +198,7 @@
           }
           const slice = buf.slice(offset, offset + CHUNK);
           offset += CHUNK;
-          port.postMessage({ type: "chunk", data: Array.from(new Uint8Array(slice)) });
+          port.postMessage({ type: "chunk", data: new Uint8Array(slice) });
         } else if (msg.type === "done") {
           port.disconnect();
           resolve();
